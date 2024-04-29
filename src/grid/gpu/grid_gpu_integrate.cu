@@ -397,7 +397,7 @@ __device__ static void integrate_kernel(const kernel_params *params) {
   // Allocate Cab from global memory if it does not fit into shared memory.
   cab_store cab = {.data = NULL, .n1 = task.n1};
   if (params->smem_cab_length < task.n1 * task.n2) {
-    cab.data = malloc_cab(&task);
+    // cab.data = malloc_cab(&task);
   } else {
     cab.data = smem_cab;
   }
@@ -415,7 +415,7 @@ __device__ static void integrate_kernel(const kernel_params *params) {
   }
 
   if (params->smem_cab_length < task.n1 * task.n2) {
-    free_cab(cab.data);
+    // free_cab(cab.data);
   }
 }
 

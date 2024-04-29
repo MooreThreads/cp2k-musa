@@ -63,7 +63,7 @@ __device__ static void atomicAddDouble(double *address, double val) {
   if (val == 0.0)
     return;
 
-#if __CUDA_ARCH__ >= 600
+#if __CUDA_ARCH__ >= 600 || __MUSA_ARCH__ >= 210
   atomicAdd(address, val); // part of cuda library
 #else
   // https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#atomic-functions

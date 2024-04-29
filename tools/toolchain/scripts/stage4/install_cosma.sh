@@ -152,7 +152,7 @@ case "$with_cosma" in
         -DCMAKE_INSTALL_LIBDIR=lib \
         -DCMAKE_VERBOSE_MAKEFILE=ON \
         -DCMAKE_BUILD_TYPE="RelWithDebInfo" \
-        -DBUILD_SHARED_LIBS=NO \
+        -DBUILD_SHARED_LIBS=ON \
         -DCOSMA_BLAS=${cosma_blas} \
         -DCOSMA_SCALAPACK=${cosma_sl} \
         -DCOSMA_WITH_TESTS=NO \

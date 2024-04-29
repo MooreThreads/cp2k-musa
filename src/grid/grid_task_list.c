@@ -110,7 +110,7 @@ void grid_create_task_list(
 #else
     fprintf(stderr,
             "Error: The GPU grid backend is not available. "
-            "Please re-compile with -D__OFFLOAD_CUDA or -D__OFFLOAD_HIP");
+            "Please re-compile with -D__OFFLOAD_CUDA, -D__OFFLOAD_MUSA or -D__OFFLOAD_HIP");
     abort();
 #endif
     break;

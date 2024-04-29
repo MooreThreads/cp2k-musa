@@ -225,6 +225,9 @@ CONTAINS
 #if defined(__OFFLOAD_HIP)
       flags = TRIM(flags)//" offload_hip"
 #endif
+#if defined(__OFFLOAD_MUSA)
+      flags = TRIM(flags)//" offload_musa"
+#endif
 #if defined(__NO_OFFLOAD_GRID)
       flags = TRIM(flags)//" no_offload_grid"
 #endif

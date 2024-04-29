@@ -7,7 +7,7 @@
 
 #include <stdbool.h>
 
-#if defined(__CUDACC__) || defined(__HIPCC__)
+#if defined(__CUDACC__) || defined(__HIPCC__) || defined(__MUSACC__)
 #define GRID_DEVICE __device__
 #else
 #define GRID_DEVICE

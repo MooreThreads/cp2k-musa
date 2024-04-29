@@ -38,6 +38,12 @@ set(VERSION_MAJOR 23)
 set(VERSION_MINOR 1)
 set(VERSION_PATCH 00)
 
+set(MUSA_ROOT "/usr/local/musa" CACHE STRING "set musa root directory")
+# set(CMAKE_Fortran_COMPILER gfortran)
+set(CMAKE_Fortran_COMPILER "/usr/bin/gfortran")
+set(CMAKE_C_COMPILER "${MUSA_ROOT}/bin/clang")
+set(CMAKE_CXX_COMPILER "${MUSA_ROOT}/bin/mcc")
+
 project(
   cp2k
   DESCRIPTION "CP2K"
@@ -65,6 +71,8 @@ string(REPLACE "-DNDEBUG" "" CMAKE_Fortran_FLAGS_RELEASE
                ${CMAKE_Fortran_FLAGS_RELEASE})
 
 find_package(PkgConfig)
+
+link_libraries(asan ubsan)
 
 # ##############################################################################
 # Define the paths for static libraries and executables
@@ -233,8 +241,9 @@ endif()
 # # gpu related options                                                    # #
 # ##############################################################################
 
-set(CP2K_SUPPORTED_ACCELERATION_TARGETS CUDA HIP NONE)
+set(CP2K_SUPPORTED_ACCELERATION_TARGETS CUDA HIP MUSA NONE)
 set(CP2K_SUPPORTED_CUDA_ARCHITECTURES K20X K40 K80 P100 V100 A100)
+set(CP2K_SUPPORTED_MUSA_ARCHITECTURES S80 S3000 S4000)
 set(CP2K_SUPPORTED_HIP_ARCHITECTURES
     Mi50
     Mi100
@@ -255,11 +264,12 @@ set(CP2K_WITH_GPU
 
 set_property(
   CACHE CP2K_WITH_GPU PROPERTY STRINGS ${CP2K_SUPPORTED_CUDA_ARCHITECTURES}
-                               ${CP2K_SUPPORTED_HIP_ARCHITECTURES})
+                               ${CP2K_SUPPORTED_HIP_ARCHITECTURES}
+                               ${CP2K_SUPPORTED_MUSA_ARCHITECTURES})
 
 set(CP2K_USE_ACCEL
     "NONE"
-    CACHE STRING "Set hardware acceleartion support: CUDA, HIP")
+    CACHE STRING "Set hardware acceleartion support: CUDA, HIP, MUSA")
 
 set_property(CACHE CP2K_USE_ACCEL
              PROPERTY STRINGS ${CP2K_SUPPORTED_ACCELERATION_TARGETS})
@@ -332,6 +342,10 @@ if(CP2K_USE_ACCEL MATCHES "HIP")
   set(__cp2k_cmake_name "local_hip")
 endif()
 
+if(CP2K_USE_ACCEL MATCHES "MUSA")
+  set(__cp2k_cmake_name "local_musa")
+endif()
+
 if(CP2K_CMAKE_SUFFIX)
   string(APPEND __cp2k_cmake_name "${CP2K_CMAKE_SUFFIX}")
 endif()
@@ -355,7 +369,7 @@ if(CP2K_ENABLE_CONSISTENCY_CHECKS)
 endif()
 
 # for the time being I change the bin directory to point to
-# ../exe/build-cmake-{cuda,hip,cpu} when we want to run the regtests afterwards.
+# ../exe/build-cmake-{cuda,hip,musa,cpu} when we want to run the regtests afterwards.
 # This solution does not require modifying the regtests scripts at all and cmake
 # does not mind this change when we want to install cp2k with a command like
 # `make install`
@@ -489,7 +503,7 @@ endif()
 
 # CUDA / ROCM easy for cuda a moving target for hip
 
-if((CP2K_USE_ACCEL MATCHES CUDA) OR (CP2K_USE_ACCEL MATCHES HIP))
+if((CP2K_USE_ACCEL MATCHES CUDA) OR (CP2K_USE_ACCEL MATCHES HIP) OR (CP2K_USE_ACCEL MATCHES MUSA))
   set(CP2K_GPU_ARCH_NUMBER_K20X 35)
   set(CP2K_GPU_ARCH_NUMBER_K40 35)
   set(CP2K_GPU_ARCH_NUMBER_K80 37)
@@ -501,10 +515,14 @@ if((CP2K_USE_ACCEL MATCHES CUDA) OR (CP2K_USE_ACCEL MATCHES HIP))
   set(CP2K_GPU_ARCH_NUMBER_Mi200 gfx90a)
   set(CP2K_GPU_ARCH_NUMBER_Mi250 gfx90a)
   set(CP2K_GPU_ARCH_NUMBER_Mi300 gfx1103)
+  set(CP2K_GPU_ARCH_NUMBER_S80 21)
+  set(CP2K_GPU_ARCH_NUMBER_S3000 21)
+  set(CP2K_GPU_ARCH_NUMBER_S4000 22)
 endif()
 
 set(CP2K_USE_HIP OFF)
 set(CP2K_USE_CUDA OFF)
+set(CP2K_USE_MUSA OFF)
 
 if(CP2K_USE_ACCEL MATCHES "CUDA")
   # P100 is the default target.
@@ -568,11 +586,11 @@ elseif(CP2K_USE_ACCEL MATCHES "HIP")
     set(HIP_RELEASE_OPTIONS "-O0 -g --std=c++11")
   endif()
 
-  set(CMAKE_HIP_ARCGITECTURES "${CP2K_GPU_ARCH_NUMBER_${CP2K_WITH_GPU}}")
+  set(CMAKE_HIP_ARCHITECTURES "${CP2K_GPU_ARCH_NUMBER_${CP2K_WITH_GPU}}")
   set(CP2K_USE_HIP ON)
 
   # use hardware atomic operations on Mi250X.
-  if(CMAKE_HIP_ARCGITECTURES MATCHES "gfx90a|gfx1103")
+  if(CMAKE_HIP_ARCHITECTURES MATCHES "gfx90a|gfx1103")
     set(HIP_RELEASE_OPTIONS "-munsafe-fp-atomics")
   endif()
 
@@ -586,12 +604,31 @@ elseif(CP2K_USE_ACCEL MATCHES "HIP")
       set(CMAKE_HIP_ARCHITECTURES "gfx1103:xnack+")
     endif()
   endif()
+elseif(CP2K_USE_ACCEL MATCHES "MUSA")
+  set(CP2K_USE_MUSA ON)
+
+  # list(APPEND CMAKE_PREFIX_PATH $ENV{MUSA_ROOT})
+  list(APPEND CMAKE_MODULE_PATH ${MUSA_ROOT}/cmake)
+  find_package(MUSA REQUIRED)
+  find_package(MUSAToolkit REQUIRED)
+
+  set(CMAKE_MUSA_ARCHITECTURES ${CP2K_GPU_ARCH_NUMBER_${CP2K_WITH_GPU}})
+  message(STATUS "GPU target architecture: ${CP2K_WITH_GPU}\n"
+                 "GPU architecture number: ${CMAKE_MUSA_ARCHITECTURES}\n"
+                 "GPU profiling enabled: ${CP2K_WITH_MUSA_PROFILING}\n")
+
+  set(CP2K_HAVE_GPU_GRAPH_SUPPORT OFF)
 endif()
 
 # PACKAGE DISCOVERY (compiler configuration can impact package discovery)
 find_package(OpenMP REQUIRED COMPONENTS Fortran C CXX)
 
-find_package(DBCSR 2.6 REQUIRED)
+set(DBCSR_ROOT "${CMAKE_SOURCE_DIR}/install" CACHE STRING "set dbcsr root directory")
+if(NOT CP2K_BUILD_DBCSR)
+  list(APPEND CMAKE_MODULE_PATH ${DBCSR_ROOT})
+  find_package(DBCSR 2.6 REQUIRED)
+  include_directories(${DBCSR_ROOT}/include)
+endif()
 
 # ==================================
 if(CP2K_USE_ELPA)
@@ -800,7 +837,7 @@ if(CP2K_USE_MPI)
           "    - libraries : ${CP2K_SCALAPACK_LINK_LIBRARIES}\n\n")
 endif()
 
-if((CP2K_USE_ACCEL MATCHES "CUDA") OR (CP2K_USE_ACCEL MATCHES "HIP"))
+if((CP2K_USE_ACCEL MATCHES "CUDA") OR (CP2K_USE_ACCEL MATCHES "HIP") OR (CP2K_USE_ACCEL MATCHES "MUSA"))
 
   message("  - Hardware Acceleration:\n")
   if(CP2K_USE_ACCEL MATCHES "CUDA")
@@ -812,6 +849,11 @@ if((CP2K_USE_ACCEL MATCHES "CUDA") OR (CP2K_USE_ACCEL MATCHES "HIP"))
 
   if(CP2K_USE_ACCEL MATCHES "HIP")
     message("   - HIP:\n" "    - GPU target architecture : ${CP2K_WITH_GPU}\n"
+            "    - GPU architecture number : ${CP2K_ACC_ARCH_NUMBER}\n\n")
+  endif()
+
+  if(CP2K_USE_ACCEL MATCHES "MUSA")
+    message("   - MUSA:\n" "    - GPU target architecture : ${CP2K_WITH_GPU}\n"
             "    - GPU architecture number : ${CP2K_ACC_ARCH_NUMBER}\n\n")
   endif()
 

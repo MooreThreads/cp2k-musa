@@ -48,6 +48,12 @@ if(NOT TARGET cp2k::cp2k)
     find_dependency(hipblas REQUIRED IMPORTED CONFIG)
   endif()
 
+  if(@CP2K_USE_MUSA@)
+    # Find MUSA
+    find_dependency(mufft REQUIRED IMPORTED CONFIG)
+    find_dependency(mublas REQUIRED IMPORTED CONFIG)
+  endif()
+
   if(@CP2K_USE_CUDA@)
     find_dependency(CUDAToolkit REQUIRED)
   endif()

@@ -13,7 +13,7 @@
 #include "offload_library.h"
 #include "offload_runtime.h"
 
-#if (defined(__OFFLOAD_CUDA) || defined(__OFFLOAD_HIP))
+#if (defined(__OFFLOAD_CUDA) || defined(__OFFLOAD_HIP) || defined(__OFFLOAD_MUSA))
 
 #if defined(__OFFLOAD_CUDA)
 #include <cufft.h>
@@ -23,6 +23,8 @@
 #else
 #include <hipfft/hipfft.h>
 #endif
+#elif defined(__OFFLOAD_MUSA)
+#include <mufft.h>
 #endif
 
 #if defined(__OFFLOAD_CUDA)
@@ -33,6 +35,10 @@ typedef cufftResult offload_fftResult;
 typedef hipfftHandle offload_fftHandle;
 typedef hipfftType offload_fftType;
 typedef hipfftResult offload_fftResult;
+#elif defined(__OFFLOAD_MUSA)
+typedef mufftHandle offload_fftHandle;
+typedef mufftType offload_fftType;
+typedef mufftResult offload_fftResult;
 #endif
 
 #if defined(__OFFLOAD_CUDA)
@@ -45,6 +51,11 @@ typedef hipfftResult offload_fftResult;
 #define OFFLOAD_FFT_FORWARD HIPFFT_FORWARD
 #define OFFLOAD_FFT_INVERSE HIPFFT_BACKWARD // inconsistent
 #define OFFLOAD_FFT_Z2Z HIPFFT_Z2Z
+#elif defined(__OFFLOAD_MUSA)
+#define OFFLOAD_FFT_SUCCESS MUFFT_SUCCESS
+#define OFFLOAD_FFT_FORWARD MUFFT_FORWARD
+#define OFFLOAD_FFT_INVERSE MUFFT_INVERSE
+#define OFFLOAD_FFT_Z2Z MUFFT_Z2Z
 #endif
 
 /*******************************************************************************
@@ -170,6 +181,61 @@ static inline const char *offload_fftGetErrorString(offload_fftResult error) {
     // case HIPFFT_LICENSE_ERROR:
     //  return "HIPFFT_LICENSE_ERROR";
   }
+
+#elif defined(__OFFLOAD_MUSA)
+
+  switch (error) {
+  case MUFFT_SUCCESS:
+    return "MUFFT_SUCCESS";
+
+  case MUFFT_INVALID_PLAN:
+    return "MUFFT_INVALID_PLAN";
+
+  case MUFFT_ALLOC_FAILED:
+    return "MUFFT_ALLOC_FAILED";
+
+  case MUFFT_INVALID_TYPE:
+    return "MUFFT_INVALID_TYPE";
+
+  case MUFFT_INVALID_VALUE:
+    return "MUFFT_INVALID_VALUE";
+
+  case MUFFT_INTERNAL_ERROR:
+    return "MUFFT_INTERNAL_ERROR";
+
+  case MUFFT_EXEC_FAILED:
+    return "MUFFT_EXEC_FAILED";
+
+  case MUFFT_SETUP_FAILED:
+    return "MUFFT_SETUP_FAILED";
+
+  case MUFFT_INVALID_SIZE:
+    return "MUFFT_INVALID_SIZE";
+
+  case MUFFT_INCOMPLETE_PARAMETER_LIST:
+    return "MUFFT_INCOMPLETE_PARAMETER_LIST";
+
+  case MUFFT_INVALID_DEVICE:
+    return "MUFFT_INVALID_DEVICE";
+
+  case MUFFT_PARSE_ERROR:
+    return "MUFFT_PARSE_ERROR";
+
+  case MUFFT_NO_WORKSPACE:
+    return "MUFFT_NO_WORKSPACE";
+
+  case MUFFT_NOT_IMPLEMENTED:
+    return "MUFFT_NOT_IMPLEMENTED";
+
+  case MUFFT_NOT_SUPPORTED:
+    return "MUFFT_NOT_SUPPORTED";
+
+  case MUFFT_UNALIGNED_DATA:
+    return "MUFFT_UNALIGNED_DATA";
+
+  case MUFFT_LICENSE_ERROR:
+    return "MUFFT_LICENSE_ERROR";
+  }
 #endif
 
   return "<unknown>";
@@ -184,6 +250,8 @@ static inline void offload_fftPlan3d(offload_fftHandle *plan, int nx, int ny,
   OFFLOAD_FFT_CHECK(cufftPlan3d(plan, nx, ny, nz, type));
 #elif defined(__OFFLOAD_HIP)
   OFFLOAD_FFT_CHECK(hipfftPlan3d(plan, nx, ny, nz, type));
+#elif defined(__OFFLOAD_MUSA)
+  OFFLOAD_FFT_CHECK(mufftPlan3d(plan, nx, ny, nz, type));
 #endif
 }
 
@@ -201,6 +269,9 @@ static inline void offload_fftPlanMany(offload_fftHandle *plan, int rank,
 #elif defined(__OFFLOAD_HIP)
   OFFLOAD_FFT_CHECK(hipfftPlanMany(plan, rank, n, inembed, istride, idist,
                                    onembed, ostride, odist, type, batch));
+#elif defined(__OFFLOAD_MUSA)
+  OFFLOAD_FFT_CHECK(mufftPlanMany(plan, rank, n, inembed, istride, idist,
+                                  onembed, ostride, odist, type, batch));
 #endif
 }
 
@@ -213,6 +284,8 @@ static inline void offload_fftSetStream(offload_fftHandle plan,
   OFFLOAD_FFT_CHECK(cufftSetStream(plan, stream))
 #elif defined(__OFFLOAD_HIP)
   OFFLOAD_FFT_CHECK(hipfftSetStream(plan, stream))
+#elif defined(__OFFLOAD_MUSA)
+  OFFLOAD_FFT_CHECK(mufftSetStream(plan, stream))
 #endif
 }
 
@@ -224,6 +297,8 @@ static inline void offload_fftDestroy(offload_fftHandle plan) {
   OFFLOAD_FFT_CHECK(cufftDestroy(plan));
 #elif defined(__OFFLOAD_HIP)
   OFFLOAD_FFT_CHECK(hipfftDestroy(plan));
+#elif defined(__OFFLOAD_MUSA)
+  OFFLOAD_FFT_CHECK(mufftDestroy(plan));
 #endif
 }
 
@@ -239,10 +314,13 @@ static inline void offload_fftExecZ2Z(offload_fftHandle plan,
 #elif defined(__OFFLOAD_HIP)
   OFFLOAD_FFT_CHECK(hipfftExecZ2Z(plan, (hipfftDoubleComplex *)idata,
                                   (hipfftDoubleComplex *)odata, direction));
+#elif defined(__OFFLOAD_MUSA)
+  OFFLOAD_FFT_CHECK(mufftExecZ2Z(plan, (mufftDoubleComplex *)idata,
+                                 (mufftDoubleComplex *)odata, direction));
 #endif
 }
 
-#endif // #if (defined(__OFFLOAD_CUDA) || defined(__OFFLOAD_HIP))
+#endif // #if (defined(__OFFLOAD_CUDA) || defined(__OFFLOAD_HIP)) || defined(__OFFLOAD_MUSA))
 
 #endif
 

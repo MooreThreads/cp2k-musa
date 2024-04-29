@@ -1385,7 +1385,7 @@ set(CP2K_PROGS_F
     motion/xyz2dcd.F
     nequip_unittest.F)
 
-if(CP2K_USE_CUDA OR CP2K_USE_HIP)
+if(CP2K_USE_CUDA OR CP2K_USE_HIP OR CP2K_USE_MUSA)
   if(NOT CP2K_DISABLE_PW_GPU)
     list(APPEND CP2K_SRCS_GPU "pw/gpu/pw_gpu_kernels.cu")
     list(APPEND CP2K_SRCS_C ${CP2K_PW_SRCS_C})
@@ -1455,6 +1455,11 @@ if(CP2K_USE_HIP)
                                                 hip::host)
 endif()
 
+if(CP2K_USE_MUSA)
+  add_library(cp2k_musa_libs INTERFACE)
+  target_link_libraries(cp2k_musa_libs INTERFACE MUSA::mufft MUSA::mublas MUSA::musart MUSA::musa_driver)
+endif()
+
 add_library(cp2k_linalg_libs INTERFACE)
 target_link_libraries(
   cp2k_linalg_libs
@@ -1464,6 +1469,7 @@ target_link_libraries(
             cp2k::BLAS::blas
             $<$<BOOL:${CP2K_USE_CUDA}>:cp2k_cuda_libs>
             $<$<BOOL:${CP2K_USE_HIP}>:cp2k_hip_libs>
+            $<$<BOOL:${CP2K_USE_MUSA}>:cp2k_musa_libs>
             $<$<BOOL:${CP2K_USE_MPI}>:MPI::MPI_Fortran>
             $<$<BOOL:${CP2K_USE_MPI}>:MPI::MPI_C>
             $<$<BOOL:${CP2K_USE_MPI}>:MPI::MPI_CXX>
@@ -1476,6 +1482,7 @@ set(CP2K_GPU_DFLAGS
     __OFFLOAD_HIP>
     $<$<COMPILE_LANGUAGE:HIP>:__HIP_PLATFORM_AMD__
     __OFFLOAD_HIP>
+    $<$<BOOL:${CP2K_USE_MUSA}>:__OFFLOAD_MUSA>
     $<$<BOOL:${CP2K_USE_CUDA}>:__OFFLOAD_CUDA>
     $<$<COMPILE_LANGUAGE:CUDA>:__OFFLOAD_CUDA>)
 
@@ -1494,10 +1501,24 @@ foreach(cp2k_src ${CP2K_SRCS})
 endforeach()
 
 if(CP2K_USE_LIBTORCH)
-  add_library(cp2k
-              "${CP2K_SRCS};${CP2K_SRCS_C};${CP2K_SRCS_GPU};${CP2K_SRCS_CPP}")
+  add_library(cp2k "${CP2K_SRCS};${CP2K_SRCS_C};${CP2K_SRCS_GPU};${CP2K_SRCS_CPP}")
 else()
-  add_library(cp2k "${CP2K_SRCS};${CP2K_SRCS_C};${CP2K_SRCS_GPU}")
+  if(CP2K_USE_MUSA)
+    # set_source_files_properties(${CP2K_SRCS_GPU} PROPERTIES LANGUAGE CXX)
+    include_directories(${MUSA_ROOT}/include)
+    # add_library(temp_target OBJECT "${CP2K_SRCS};${CP2K_SRCS_C}")
+    add_library(cp2k "${CP2K_SRCS};${CP2K_SRCS_C}") # temp_target
+    target_compile_definitions(cp2k PRIVATE -D__OFFLOAD_MUSA) # temp_target
+    target_compile_options(cp2k PRIVATE -fopenmp) # temp_target
+    musa_add_library(musa_target STATIC ${CP2K_SRCS_GPU})
+    target_compile_options(musa_target PRIVATE --offload-arch=mp_${CMAKE_MUSA_ARCHITECTURES})
+    target_compile_options(musa_target PRIVATE -mtgpu)
+    target_compile_definitions(musa_target PRIVATE -D__OFFLOAD_MUSA)
+    # add_library(cp2k $<TARGET_OBJECTS:temp_target> $<TARGET_OBJECTS:musa_target>)
+    target_link_libraries(cp2k PRIVATE musa_target)
+  else()
+    add_library(cp2k "${CP2K_SRCS};${CP2K_SRCS_C};${CP2K_SRCS_GPU}")
+  endif()
 endif()
 
 target_compile_features(cp2k PUBLIC cuda_std_11)
@@ -1520,6 +1541,9 @@ if(CP2K_USE_ACCEL MATCHES "CUDA")
 elseif(CP2K_USE_ACCEL MATCHES "HIP")
   set_property(TARGET cp2k PROPERTY HIP_ARCHITECTURES
                                     ${CMAKE_HIP_ARCHITECTURES})
+elseif(CP2K_USE_ACCEL MATCHES "MUSA")
+  set_property(TARGET cp2k PROPERTY MUSA_ARCHITECTURES
+                                    ${CMAKE_MUSA_ARCHITECTURES})
 endif()
 
 # mix the target and variables pointing to the include directories.
@@ -1611,13 +1635,14 @@ target_compile_definitions(
     $<$<BOOL:${CP2K_USE_CUSOLVER_MP}>:__CUSOLVERMP>
     $<$<BOOL:${CP2K_USE_CUDA}>:__OFFLOAD_CUDA>
     $<$<COMPILE_LANGUAGE:CUDA>:__OFFLOAD_CUDA>
+    $<$<BOOL:${CP2K_USE_MUSA}>:__OFFLOAD_MUSA>
     $<$<BOOL:${CP2K_USE_HIP}>:__HIP_PLATFORM_AMD__
     __OFFLOAD_HIP>
     $<$<BOOL:${CP2K_USE_UNIFIED_MEMORY}>:__OFFLOAD_UNIFIED_MEMORY>
     $<$<COMPILE_LANGUAGE:HIP>:__HIP_PLATFORM_AMD__
     __OFFLOAD_HIP>)
 
-if(CP2K_USE_CUDA OR CP2K_USE_HIP)
+if(CP2K_USE_CUDA OR CP2K_USE_HIP OR CP2K_USE_MUSA)
   # these checks are only relevant when the debug mode is on
 
   target_compile_definitions(
@@ -1692,11 +1717,11 @@ endforeach()
 # different miniapps
 # ##############################################################################
 
-add_executable(dbm_miniapp dbm/dbm_miniapp.c ${CP2K_DBM_SRCS_C}
-                           ${CP2K_DBM_SRCS_GPU} ${CP2K_OFFLOAD_SRCS_C})
+add_executable(dbm_miniapp dbm/dbm_miniapp.c)
 target_compile_definitions(
   dbm_miniapp PRIVATE $<$<BOOL:${CP2K_USE_LIBXSMM}>:__LIBXSMM>
                       $<$<STREQUAL:${CP2K_BLAS_VENDOR},"MKL">:__MKL>)
+target_link_libraries(dbm_miniapp PUBLIC cp2k)
 
 if(CP2K_DISABLE_DBM_GPU)
   target_compile_definitions(dbm_miniapp PRIVATE __NO_OFFLOAD_DBM)
@@ -1707,11 +1732,7 @@ endif()
 foreach(__app grid_miniapp grid_unittest)
   add_executable(
     ${__app}
-    "grid/${__app}.c"
-    ${CP2K_GRID_SRCS_C}
-    $<$<OR:$<BOOL:${CP2K_USE_CUDA}>,$<BOOL:${CP2K_USE_HIP}>>:${CP2K_GRID_SRCS_GPU}>
-    $<$<BOOL:${CP2K_USE_HIP}>:${CP2K_GRID_SRCS_HIP}>
-    ${CP2K_OFFLOAD_SRCS_C})
+    "grid/${__app}.c")
   target_compile_definitions(
     ${__app} PRIVATE $<$<BOOL:${CP2K_USE_LIBXSMM}>:__LIBXSMM>
                      $<$<STREQUAL:${CP2K_BLAS_VENDOR},"MKL">:__MKL>)
@@ -1721,6 +1742,7 @@ foreach(__app grid_miniapp grid_unittest)
   else()
     target_compile_definitions(${__app} PUBLIC ${CP2K_GPU_DFLAGS})
   endif()
+  target_link_libraries(${__app} PUBLIC cp2k)
 endforeach()
 
 # ##############################################################################
@@ -1748,6 +1770,10 @@ foreach(__app grid_miniapp grid_unittest dbm_miniapp)
                                               ${CMAKE_CUDA_ARCHITECTURES})
   endif()
 
+  if(CP2K_USE_MUSA)
+    # set_target_properties(${__app} PROPERTIES MUSA_ARCHITECTURES ${CMAKE_MUSA_ARCHITECTURES})
+  endif()
+
   target_compile_features(${__app} PUBLIC cuda_std_14 c_std_99 cxx_std_14)
 
   target_include_directories(
@@ -1757,6 +1783,7 @@ foreach(__app grid_miniapp grid_unittest dbm_miniapp)
            $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src/common>
            $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src>
            $<$<BOOL:${CP2K_USE_CUDA}>:${CMAKE_CUDA_INCLUDE_DIRECTORIES}>
+           $<$<BOOL:${CP2K_USE_MUSA}>:${CMAKE_MUSA_INCLUDE_DIRECTORIES}>
            $<$<BOOL:${CP2K_USE_HIP}>:${CMAKE_HIP_INCLUDE_DIRECTORIES}>)
 
   target_link_libraries(
@@ -1789,6 +1816,10 @@ endif()
 
 if(CP2K_USE_HIP)
   list(APPEND cp2k_export_libs cp2k_hip_libs)
+endif()
+
+if(CP2K_USE_MUSA)
+  list(APPEND cp2k_export_libs cp2k_musa_libs)
 endif()
 
 install(

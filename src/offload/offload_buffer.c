@@ -49,7 +49,11 @@ void offload_create_buffer(const int length, offload_buffer **buffer) {
   OFFLOAD_CHECK(hipMalloc((void **)&(*buffer)->host_buffer, requested_size));
   (*buffer)->device_buffer = (*buffer)->host_buffer;
 #endif
-
+#elif defined(__OFFLOAD_MUSA)
+  // TODO: With size 0 musaMallocHost doesn't null the pointer and musaFreeHost fails?
+  OFFLOAD_CHECK(
+      musaMallocHost((void **)&(*buffer)->host_buffer, requested_size));
+  OFFLOAD_CHECK(musaMalloc((void **)&(*buffer)->device_buffer, requested_size));
 #else
   (*buffer)->host_buffer = malloc(requested_size);
   (*buffer)->device_buffer = NULL;
@@ -74,6 +78,9 @@ void offload_free_buffer(offload_buffer *buffer) {
 #ifndef __OFFLOAD_UNIFIED_MEMORY
   OFFLOAD_CHECK(hipHostFree(buffer->host_buffer));
 #endif
+#elif defined(__OFFLOAD_MUSA)
+  OFFLOAD_CHECK(musaFreeHost(buffer->host_buffer));
+  OFFLOAD_CHECK(musaFree(buffer->device_buffer));
 #else
   free(buffer->host_buffer);
 #endif

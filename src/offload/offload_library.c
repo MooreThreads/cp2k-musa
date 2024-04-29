@@ -18,6 +18,8 @@
 #include <cuda.h>
 #elif defined(__OFFLOAD_HIP)
 #include <hip/hip_runtime_api.h>
+#elif defined(__OFFLOAD_MUSA)
+#include <musa.h>
 #endif
 
 #if defined(__OFFLOAD_PROFILING)
@@ -25,6 +27,8 @@
 #include <nvToolsExt.h>
 #elif defined(__OFFLOAD_HIP) && defined(__HIP_PLATFORM_AMD__)
 #include <roctracer/roctx.h>
+#elif defined(__OFFLOAD_MUSA)
+// TODO: add mt profiling tool
 #endif
 #endif
 
@@ -59,6 +63,13 @@ void offload_init(void) {
   }
 #elif defined(__OFFLOAD_HIP)
   OFFLOAD_CHECK(hipInit(0));
+#elif defined(__OFFLOAD_MUSA)
+  MUresult error = muInit(0);
+  if (error != MUSA_SUCCESS) {
+    fprintf(stderr, "ERROR: %s %d %s %d\n", "muInit failed with error: ", error,
+            __FILE__, __LINE__);
+    abort();
+  }
 #endif
 }
 
@@ -72,6 +83,8 @@ int offload_get_device_count(void) {
   OFFLOAD_CHECK(cudaGetDeviceCount(&count));
 #elif defined(__OFFLOAD_HIP)
   OFFLOAD_CHECK(hipGetDeviceCount(&count));
+#elif defined(__OFFLOAD_MUSA)
+  OFFLOAD_CHECK(musaGetDeviceCount(&count));
 #endif
   return count;
 }
@@ -97,6 +110,8 @@ void offload_activate_chosen_device(void) {
   OFFLOAD_CHECK(cudaSetDevice(chosen_device_id));
 #elif defined(__OFFLOAD_HIP)
   OFFLOAD_CHECK(hipSetDevice(chosen_device_id));
+#elif defined(__OFFLOAD_MUSA)
+  OFFLOAD_CHECK(musaSetDevice(chosen_device_id));
 #endif
 }
 
@@ -125,6 +140,8 @@ void offload_timeset(const char *message) {
   nvtxRangePushEx(&eventAttrib);
 #elif defined(__OFFLOAD_HIP) && defined(__HIP_PLATFORM_AMD__)
   roctxRangePushA(message);
+#elif defined(__OFFLOAD_MUSA)
+// TODO: add mt profiling tool
 #endif
 #endif
   (void)message; // mark argument as used
@@ -140,6 +157,8 @@ void offload_timestop(void) {
   nvtxRangePop();
 #elif defined(__OFFLOAD_HIP) && defined(__HIP_PLATFORM_AMD__)
   roctxRangePop();
+#elif defined(__OFFLOAD_MUSA)
+// TODO: add mt profiling tool
 #endif
 #endif
 }
@@ -153,6 +172,8 @@ void offload_mem_info(size_t *free, size_t *total) {
   OFFLOAD_CHECK(cudaMemGetInfo(free, total));
 #elif defined(__OFFLOAD_HIP)
   OFFLOAD_CHECK(hipMemGetInfo(free, total));
+#elif defined(__OFFLOAD_MUSA)
+  OFFLOAD_CHECK(musaMemGetInfo(free, total));
 #else
   *free = 0;
   *total = 0;
@@ -160,7 +181,7 @@ void offload_mem_info(size_t *free, size_t *total) {
 }
 
 int offload_host_malloc(void **ptr__, const size_t size__) {
-#if defined(__OFFLOAD_CUDA) || defined(__OFFLOAD_HIP)
+#if defined(__OFFLOAD_CUDA) || defined(__OFFLOAD_HIP) || defined(__OFFLOAD_MUSA)
   /* API checks are included in the overloading of the function */
   offloadMallocHost(ptr__, size__);
 #else
@@ -171,7 +192,7 @@ int offload_host_malloc(void **ptr__, const size_t size__) {
 }
 
 int offload_host_free(void *ptr__) {
-#if defined(__OFFLOAD_CUDA) || defined(__OFFLOAD_HIP)
+#if defined(__OFFLOAD_CUDA) || defined(__OFFLOAD_HIP) || defined(__OFFLOAD_MUSA)
   offloadFreeHost(ptr__);
 #else
   free(ptr__);

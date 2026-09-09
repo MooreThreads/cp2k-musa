@@ -1457,6 +1457,8 @@ endif()
 
 if(CP2K_USE_MUSA)
   add_library(cp2k_musa_libs INTERFACE)
+  target_link_directories(cp2k_musa_libs INTERFACE "${MUSA_ROOT}/lib")
+  target_link_options(cp2k_musa_libs INTERFACE "-Wl,-rpath,${MUSA_ROOT}/lib")
   target_link_libraries(cp2k_musa_libs INTERFACE MUSA::mufft MUSA::mublas MUSA::musart MUSA::musa_driver)
 endif()
 

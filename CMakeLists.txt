@@ -637,6 +637,14 @@ elseif(CP2K_USE_ACCEL MATCHES "MUSA")
       "${MUSA_MCC_FLAGS}"
       CACHE STRING "Extra flags to give to mcc" FORCE)
 
+  # libmufft needs libmtfft-device-*.so from the same MUSA lib directory.
+  # Without -L/-rpath, executables fail to link even after GPU objects compile.
+  link_directories("${MUSA_ROOT}/lib")
+  list(APPEND CMAKE_BUILD_RPATH "${MUSA_ROOT}/lib")
+  list(APPEND CMAKE_INSTALL_RPATH "${MUSA_ROOT}/lib")
+  list(APPEND CMAKE_EXE_LINKER_FLAGS "-Wl,-rpath,${MUSA_ROOT}/lib")
+  list(APPEND CMAKE_SHARED_LINKER_FLAGS "-Wl,-rpath,${MUSA_ROOT}/lib")
+
   message(STATUS "GPU target architecture: ${CP2K_WITH_GPU}\n"
                  "GPU architecture number: ${CMAKE_MUSA_ARCHITECTURES}\n"
                  "MCC flags: ${MUSA_MCC_FLAGS}\n"

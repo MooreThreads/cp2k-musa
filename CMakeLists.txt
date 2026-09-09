@@ -95,7 +95,7 @@ endforeach()
 # =================================================================================================
 # OPTIONS
 
-# option(CP2K_BUILD_DBCSR "Build dbcsr before building cp2k" OFF)
+option(CP2K_BUILD_DBCSR "Build dbcsr before building cp2k" OFF)
 option(CP2K_ENABLE_REGTESTS
        "Enable installation of the binaries for running regtests afterwards"
        OFF)
@@ -243,7 +243,7 @@ endif()
 
 set(CP2K_SUPPORTED_ACCELERATION_TARGETS CUDA HIP MUSA NONE)
 set(CP2K_SUPPORTED_CUDA_ARCHITECTURES K20X K40 K80 P100 V100 A100)
-set(CP2K_SUPPORTED_MUSA_ARCHITECTURES S80 S3000 S4000)
+set(CP2K_SUPPORTED_MUSA_ARCHITECTURES S80 S3000 S4000 S5000)
 set(CP2K_SUPPORTED_HIP_ARCHITECTURES
     Mi50
     Mi100
@@ -260,7 +260,7 @@ set(CP2K_SUPPORTED_HIP_ARCHITECTURES
 set(CP2K_WITH_GPU
     "P100"
     CACHE STRING
-          "Set the CUDA GPU architecture if HIP is enabled (default: P100)")
+          "Set the GPU architecture for CUDA/HIP/MUSA (MUSA: S80 S3000 S4000 S5000)")
 
 set_property(
   CACHE CP2K_WITH_GPU PROPERTY STRINGS ${CP2K_SUPPORTED_CUDA_ARCHITECTURES}
@@ -518,6 +518,7 @@ if((CP2K_USE_ACCEL MATCHES CUDA) OR (CP2K_USE_ACCEL MATCHES HIP) OR (CP2K_USE_AC
   set(CP2K_GPU_ARCH_NUMBER_S80 21)
   set(CP2K_GPU_ARCH_NUMBER_S3000 21)
   set(CP2K_GPU_ARCH_NUMBER_S4000 22)
+  set(CP2K_GPU_ARCH_NUMBER_S5000 31)
 endif()
 
 set(CP2K_USE_HIP OFF)
@@ -612,9 +613,33 @@ elseif(CP2K_USE_ACCEL MATCHES "MUSA")
   find_package(MUSA REQUIRED)
   find_package(MUSAToolkit REQUIRED)
 
+  list(FIND CP2K_SUPPORTED_MUSA_ARCHITECTURES ${CP2K_WITH_GPU} CP2K_GPU_SUPPORTED)
+  if(CP2K_GPU_SUPPORTED EQUAL -1)
+    message(
+      FATAL_ERROR
+        "GPU architecture (${CP2K_WITH_GPU}) is not supported for MUSA. Please choose from: ${CP2K_SUPPORTED_MUSA_ARCHITECTURES}"
+    )
+  endif()
+
   set(CMAKE_MUSA_ARCHITECTURES ${CP2K_GPU_ARCH_NUMBER_${CP2K_WITH_GPU}})
+  set(CP2K_ACC_ARCH_NUMBER ${CMAKE_MUSA_ARCHITECTURES})
+
+  # FindMUSA compiles .cu via musa_add_library()/mcc using MUSA_MCC_FLAGS.
+  # target_compile_options() after musa_add_library() does not reach mcc.
+  set(_CP2K_MUSA_ARCH_FLAG "--offload-arch=mp_${CMAKE_MUSA_ARCHITECTURES}")
+  if(NOT "${MUSA_MCC_FLAGS}" MATCHES "--offload-arch=")
+    list(APPEND MUSA_MCC_FLAGS "${_CP2K_MUSA_ARCH_FLAG}")
+  endif()
+  if(NOT "${MUSA_MCC_FLAGS}" MATCHES "-mtgpu")
+    list(APPEND MUSA_MCC_FLAGS "-mtgpu")
+  endif()
+  set(MUSA_MCC_FLAGS
+      "${MUSA_MCC_FLAGS}"
+      CACHE STRING "Extra flags to give to mcc" FORCE)
+
   message(STATUS "GPU target architecture: ${CP2K_WITH_GPU}\n"
                  "GPU architecture number: ${CMAKE_MUSA_ARCHITECTURES}\n"
+                 "MCC flags: ${MUSA_MCC_FLAGS}\n"
                  "GPU profiling enabled: ${CP2K_WITH_MUSA_PROFILING}\n")
 
   set(CP2K_HAVE_GPU_GRAPH_SUPPORT OFF)

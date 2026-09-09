@@ -1510,9 +1510,11 @@ else()
     add_library(cp2k "${CP2K_SRCS};${CP2K_SRCS_C}") # temp_target
     target_compile_definitions(cp2k PRIVATE -D__OFFLOAD_MUSA) # temp_target
     target_compile_options(cp2k PRIVATE -fopenmp) # temp_target
-    musa_add_library(musa_target STATIC ${CP2K_SRCS_GPU})
-    target_compile_options(musa_target PRIVATE --offload-arch=mp_${CMAKE_MUSA_ARCHITECTURES})
-    target_compile_options(musa_target PRIVATE -mtgpu)
+    musa_add_library(
+      musa_target STATIC ${CP2K_SRCS_GPU}
+      OPTIONS --offload-arch=mp_${CMAKE_MUSA_ARCHITECTURES} -mtgpu)
+    target_compile_options(
+      musa_target PRIVATE --offload-arch=mp_${CMAKE_MUSA_ARCHITECTURES} -mtgpu)
     target_compile_definitions(musa_target PRIVATE -D__OFFLOAD_MUSA)
     # add_library(cp2k $<TARGET_OBJECTS:temp_target> $<TARGET_OBJECTS:musa_target>)
     target_link_libraries(cp2k PRIVATE musa_target)

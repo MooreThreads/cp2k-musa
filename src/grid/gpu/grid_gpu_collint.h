@@ -119,6 +119,9 @@ typedef struct {
   int smem_cab_offset;
   int smem_alpha_offset;
   int smem_cxyz_offset;
+  int smem_reduce_offset;
+  const size_t *cab_offsets;
+  double *cab_pool;
   int first_task;
   int npts_global[3];
   int npts_local[3];
@@ -128,6 +131,10 @@ typedef struct {
   const grid_gpu_task *tasks;
   const double *pab_blocks;
   GRID_CONST_WHEN_INTEGRATE double *grid;
+#if defined(__OFFLOAD_MUSA)
+  // Profiling-only per-block counters. Null on the normal execution path.
+  unsigned long long *profile_counters;
+#endif
   int la_min_diff;
   int lb_min_diff;
   int la_max_diff;
@@ -159,6 +166,7 @@ typedef struct smem_task_struct : grid_gpu_task_struct {
   // size of the cab matrix
   int n1;
   int n2;
+  size_t cab_offset;
 
   const double *pab_block;
 
@@ -477,6 +485,7 @@ __device__ static void cab_to_cxyz(const smem_task *task, const double *alpha,
  * \brief Allocates Cab block from global memory.
  * \author Ole Schuett
  ******************************************************************************/
+#if !defined(__OFFLOAD_MUSA)
 __device__ static double *malloc_cab(const smem_task *task) {
   __shared__ double *gmem_cab;
   if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
@@ -498,6 +507,7 @@ __device__ static void free_cab(double *gmem_cab) {
     free(gmem_cab);
   }
 }
+#endif
 
 /*******************************************************************************
  * \brief Initializes the cab matrix with zeros.
@@ -542,6 +552,10 @@ __device__ static void load_task(const kernel_params *params, smem_task *task) {
     task->n2 = ncoset(task->lb_max);
 
     task->pab_block = &params->pab_blocks[task->ab_block_offset];
+#if defined(__OFFLOAD_MUSA)
+    task->cab_offset =
+        params->cab_offsets != NULL ? params->cab_offsets[blockIdx.x] : 0;
+#endif
 
     // integrate
 #if (!GRID_DO_COLLOCATE)

@@ -111,8 +111,13 @@ typedef struct {
   int *tasks_per_level;
   offloadStream_t *level_streams;
   offloadStream_t main_stream;
+  offloadEvent_t input_ready_event;
+  offloadEvent_t *level_done_events;
   int lmax;
   int stats[2][20]; // [has_border_mask][lp]
+  // Host mirror of tasks used to size per-level CAB pools. Device pointers in
+  // this mirror are not dereferenced on the host.
+  grid_gpu_task *tasks_host;
   // device pointers
   double **sphis_dev;
   grid_gpu_task *tasks_dev;

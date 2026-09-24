@@ -282,10 +282,9 @@ void grid_gpu_create_task_list(
                block_num_list, radius_list, rab_list, npts_local, shift_local,
                border_width, dh, dh_inv, (const double **)task_list->sphis_dev,
                tasks_host);
+  task_list->tasks_host = tasks_host;
   offloadMalloc((void **)&task_list->tasks_dev, size);
   offloadMemcpyHtoD(task_list->tasks_dev, tasks_host, size);
-
-  free(tasks_host);
 
   // Count tasks per level.
   size = nlevels * sizeof(int);
@@ -295,6 +294,7 @@ void grid_gpu_create_task_list(
     task_list->tasks_per_level[level_list[i] - 1]++;
     assert(i == 0 || level_list[i] >= level_list[i - 1]); // expect ordered list
   }
+
 
   // Find largest angular momentum.
   task_list->lmax = 0;
@@ -322,6 +322,12 @@ void grid_gpu_create_task_list(
 
   // allocate main cuda stream
   offloadStreamCreate(&task_list->main_stream);
+  offloadEventCreate(&task_list->input_ready_event);
+  task_list->level_done_events =
+      (offloadEvent_t *)malloc(nlevels * sizeof(offloadEvent_t));
+  for (int i = 0; i < nlevels; i++) {
+    offloadEventCreate(&task_list->level_done_events[i]);
+  }
 
   // allocate one cuda stream per grid level
   size = nlevels * sizeof(offloadStream_t);
@@ -343,6 +349,11 @@ void grid_gpu_free_task_list(grid_gpu_task_list *task_list) {
   offloadFree(task_list->tasks_dev);
 
   offloadStreamDestroy(task_list->main_stream);
+  offloadEventDestroy(task_list->input_ready_event);
+  for (int i = 0; i < task_list->nlevels; i++) {
+    offloadEventDestroy(task_list->level_done_events[i]);
+  }
+  free(task_list->level_done_events);
 
   for (int i = 0; i < task_list->nlevels; i++) {
     offloadStreamDestroy(task_list->level_streams[i]);
@@ -354,6 +365,7 @@ void grid_gpu_free_task_list(grid_gpu_task_list *task_list) {
   }
   free(task_list->sphis_dev);
 
+  free(task_list->tasks_host);
   free(task_list->tasks_per_level);
   free(task_list->layouts);
   free(task_list);
@@ -377,9 +389,7 @@ void grid_gpu_collocate_task_list(const grid_gpu_task_list *task_list,
                          pab_blocks->size, task_list->main_stream);
 
   // record an event so the level streams can wait for the blocks to be uploaded
-  offloadEvent_t input_ready_event;
-  offloadEventCreate(&input_ready_event);
-  offloadEventRecord(input_ready_event, task_list->main_stream);
+  offloadEventRecord(task_list->input_ready_event, task_list->main_stream);
 
   int lp_diff;
   int first_task = 0;
@@ -394,7 +404,7 @@ void grid_gpu_collocate_task_list(const grid_gpu_task_list *task_list,
     offloadMemsetAsync(grid->device_buffer, 0, grid->size, level_stream);
 
     // launch kernel, but only after blocks have arrived
-    offloadStreamWaitEvent(level_stream, input_ready_event, 0);
+    offloadStreamWaitEvent(level_stream, task_list->input_ready_event, 0);
     grid_gpu_collocate_one_grid_level(
         task_list, first_task, last_task, func, layout, level_stream,
         pab_blocks->device_buffer, grid->device_buffer, &lp_diff);
@@ -424,8 +434,6 @@ void grid_gpu_collocate_task_list(const grid_gpu_task_list *task_list,
   }
 
   // clean up
-  offloadEventDestroy(input_ready_event);
-
   // wait for all the streams to finish
   offloadDeviceSynchronize();
 }
@@ -471,9 +479,7 @@ void grid_gpu_integrate_task_list(const grid_gpu_task_list *task_list,
                      task_list->main_stream);
 
   // record event so other streams can wait for hab, pab, virial etc to be ready
-  offloadEvent_t input_ready_event;
-  offloadEventCreate(&input_ready_event);
-  offloadEventRecord(input_ready_event, task_list->main_stream);
+  offloadEventRecord(task_list->input_ready_event, task_list->main_stream);
 
   int lp_diff;
   int first_task = 0;
@@ -489,18 +495,16 @@ void grid_gpu_integrate_task_list(const grid_gpu_task_list *task_list,
                            level_stream);
 
     // launch kernel, but only after hab, pab, virial, etc are ready
-    offloadStreamWaitEvent(level_stream, input_ready_event, 0);
+    offloadStreamWaitEvent(level_stream, task_list->input_ready_event, 0);
     grid_gpu_integrate_one_grid_level(
         task_list, first_task, last_task, compute_tau, layout, level_stream,
         pab_blocks_dev, grid->device_buffer, hab_blocks->device_buffer,
         forces_dev, virial_dev, &lp_diff);
 
     // Have main stream wait for level to complete before downloading results.
-    offloadEvent_t level_done_event;
-    offloadEventCreate(&level_done_event);
-    offloadEventRecord(level_done_event, level_stream);
-    offloadStreamWaitEvent(task_list->main_stream, level_done_event, 0);
-    offloadEventDestroy(level_done_event);
+    offloadEventRecord(task_list->level_done_events[level], level_stream);
+    offloadStreamWaitEvent(task_list->main_stream,
+                           task_list->level_done_events[level], 0);
 
     first_task = last_task + 1;
   }
@@ -535,7 +539,6 @@ void grid_gpu_integrate_task_list(const grid_gpu_task_list *task_list,
   offloadDeviceSynchronize();
 
   // clean up
-  offloadEventDestroy(input_ready_event);
   if (forces != NULL) {
     offloadFree(forces_dev);
   }

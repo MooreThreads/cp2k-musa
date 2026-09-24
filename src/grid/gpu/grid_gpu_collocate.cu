@@ -15,17 +15,38 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(__OFFLOAD_MUSA)
+#include <time.h>
+#endif
 
 #define GRID_DO_COLLOCATE 1
 #include "../common/grid_common.h"
 #include "grid_gpu_collint.h"
 #include "grid_gpu_collocate.h"
+#include <stdint.h>
 
 // This has to be included after grid_gpu_collint.h
 #include "../common/grid_prepare_pab.h"
 
 #if defined(_OMP_H)
 #error "OpenMP should not be used in .cu files to accommodate HIP."
+#endif
+
+#if defined(__OFFLOAD_MUSA)
+static int grid_musa_profile_enabled_collocate() {
+  static int enabled = -1;
+  if (enabled < 0) {
+    const char *value = getenv("CP2K_MUSA_GRID_PROFILE");
+    enabled = value != NULL && value[0] != '\0' && value[0] != '0';
+  }
+  return enabled;
+}
+
+static double grid_musa_profile_clock_collocate() {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (double)ts.tv_sec + 1.0e-9 * (double)ts.tv_nsec;
+}
 #endif
 
 /*******************************************************************************
@@ -285,7 +306,11 @@ __device__ static void collocate_kernel(const kernel_params *params) {
   // Allocate Cab from global memory if it does not fit into shared memory.
   cab_store cab = {.data = NULL, .n1 = task.n1};
   if (params->smem_cab_length < task.n1 * task.n2) {
-    // cab.data = malloc_cab(&task);
+#if defined(__OFFLOAD_MUSA)
+    cab.data = params->cab_pool + task.cab_offset;
+#else
+    cab.data = malloc_cab(&task);
+#endif
   } else {
     cab.data = smem_cab;
   }
@@ -298,7 +323,11 @@ __device__ static void collocate_kernel(const kernel_params *params) {
   cxyz_to_grid(params, &task, smem_cxyz, params->grid);
 
   if (params->smem_cab_length < task.n1 * task.n2) {
-    // free_cab(cab.data);
+#if !defined(__OFFLOAD_MUSA)
+    free_cab(cab.data);
+#else
+    // CAB pool storage is released by the host after stream completion.
+#endif
   }
 }
 
@@ -340,6 +369,12 @@ void grid_gpu_collocate_one_grid_level(
     return; // Nothing to do and lp_diff already set.
   }
 
+#if defined(__OFFLOAD_MUSA)
+  const int profile = grid_musa_profile_enabled_collocate();
+  const double profile_begin =
+      profile ? grid_musa_profile_clock_collocate() : 0.0;
+#endif
+
   init_constant_memory();
 
   // Small Cab blocks are stored in shared mem, larger ones in global memory.
@@ -352,12 +387,72 @@ void grid_gpu_collocate_one_grid_level(
   const size_t smem_per_block =
       (alpha_len + cxyz_len + cab_len) * sizeof(double);
 
+#if defined(__OFFLOAD_MUSA)
+  // Build a host-side pool for CAB blocks that do not fit in shared memory.
+  const int ntasks_level = last_task - first_task + 1;
+  size_t *cab_offsets_host =
+      (size_t *)calloc((size_t)ntasks_level, sizeof(size_t));
+  if (cab_offsets_host == NULL) {
+    fprintf(stderr, "CP2K: failed to allocate MUSA CAB offset table (%d tasks)\n",
+            ntasks_level);
+    abort();
+  }
+  size_t cab_pool_len = 0;
+  size_t cab_max_len = 0;
+  int cab_oversized_tasks = 0;
+  for (int ilocal = 0; ilocal < ntasks_level; ilocal++) {
+    const grid_gpu_task *host_task =
+        &task_list->tasks_host[first_task + ilocal];
+    const int n1 = ncoset(host_task->la_max_basis + ldiffs.la_max_diff);
+    const int n2 = ncoset(host_task->lb_max_basis + ldiffs.lb_max_diff);
+    const size_t required = (size_t)n1 * (size_t)n2;
+    if (required > (size_t)CAB_SMEM_LIMIT) {
+      if (cab_pool_len > SIZE_MAX - required) {
+        fprintf(stderr, "CP2K: MUSA CAB pool size overflow\n");
+        abort();
+      }
+      cab_offsets_host[ilocal] = cab_pool_len;
+      cab_pool_len += required;
+      cab_oversized_tasks++;
+      if (required > cab_max_len) cab_max_len = required;
+    }
+  }
+  size_t *cab_offsets_dev = NULL;
+  double *cab_pool = NULL;
+  if (cab_oversized_tasks > 0) {
+    if (cab_pool_len > SIZE_MAX / sizeof(double)) {
+      fprintf(stderr, "CP2K: MUSA CAB pool byte size overflow\n");
+      abort();
+    }
+    offloadMalloc((void **)&cab_offsets_dev,
+                  (size_t)ntasks_level * sizeof(size_t));
+    offloadMemcpyHtoD(cab_offsets_dev, cab_offsets_host,
+                      (size_t)ntasks_level * sizeof(size_t));
+    offloadMalloc((void **)&cab_pool, cab_pool_len * sizeof(double));
+    const char *cab_debug = getenv("CP2K_MUSA_CAB_POOL_DEBUG");
+    if (cab_debug != NULL && cab_debug[0] != '\0' && cab_debug[0] != '0') {
+      fprintf(stderr,
+              "CP2K MUSA CAB collocate: tasks=%d oversized=%d pool_doubles=%zu max_task_doubles=%zu\n",
+              ntasks_level, cab_oversized_tasks, cab_pool_len, cab_max_len);
+    }
+  }
+#else
+  size_t *cab_offsets_dev = NULL;
+  double *cab_pool = NULL;
+#endif
+
   // kernel parameters
   kernel_params params;
   params.smem_cab_length = cab_len;
   params.smem_cab_offset = 0;
   params.smem_alpha_offset = params.smem_cab_offset + cab_len;
   params.smem_cxyz_offset = params.smem_alpha_offset + alpha_len;
+  params.smem_reduce_offset = params.smem_cxyz_offset;
+#if defined(__OFFLOAD_MUSA)
+  params.cab_offsets = cab_offsets_dev;
+  params.cab_pool = cab_pool;
+  params.profile_counters = NULL;
+#endif
   params.first_task = first_task;
   params.func = func;
   params.grid = grid_dev;
@@ -377,6 +472,11 @@ void grid_gpu_collocate_one_grid_level(
   const int nblocks = ntasks;
   const dim3 threads_per_block(4, 4, 4);
 
+#if defined(__OFFLOAD_MUSA)
+  const double profile_launch_begin =
+      profile ? grid_musa_profile_clock_collocate() : 0.0;
+#endif
+
   if (func == GRID_FUNC_AB) {
     collocate_kernel_density<<<nblocks, threads_per_block, smem_per_block,
                                stream>>>(params);
@@ -385,6 +485,38 @@ void grid_gpu_collocate_one_grid_level(
                                stream>>>(params);
   }
   OFFLOAD_CHECK(offloadGetLastError());
+
+#if defined(__OFFLOAD_MUSA)
+  const double profile_launch_end =
+      profile ? grid_musa_profile_clock_collocate() : 0.0;
+#endif
+
+#if defined(__OFFLOAD_MUSA)
+  // The pool is shared by all blocks in this launch. Synchronize before
+  // releasing it. On the normal path there is no pool to release, so leave
+  // the launch asynchronous; the outer task-list routine already waits for
+  // the level streams. This preserves overlap between grid levels.
+  if (cab_pool != NULL || profile) {
+    offloadStreamSynchronize(stream);
+  }
+  if (cab_pool != NULL) {
+    offloadFree(cab_pool);
+  }
+  if (cab_oversized_tasks > 0) {
+    offloadFree(cab_offsets_dev);
+  }
+  free(cab_offsets_host);
+  if (profile) {
+    const double profile_sync_end = grid_musa_profile_clock_collocate();
+    fprintf(stderr,
+            "CP2K MUSA GRID PROFILE collocate tasks=%d nblocks=%d smem=%zu prep_ms=%.3f launch_ms=%.3f sync_ms=%.3f total_ms=%.3f\n",
+            ntasks, nblocks, smem_per_block,
+            1.0e3 * (profile_launch_begin - profile_begin),
+            1.0e3 * (profile_launch_end - profile_launch_begin),
+            1.0e3 * (profile_sync_end - profile_launch_end),
+            1.0e3 * (profile_sync_end - profile_begin));
+  }
+#endif
 }
 
 #endif // defined(__OFFLOAD) && !defined(__NO_OFFLOAD_GRID)

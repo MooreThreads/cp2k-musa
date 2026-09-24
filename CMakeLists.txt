@@ -40,9 +40,15 @@ set(VERSION_PATCH 00)
 
 set(MUSA_ROOT "/usr/local/musa" CACHE STRING "set musa root directory")
 # set(CMAKE_Fortran_COMPILER gfortran)
-set(CMAKE_Fortran_COMPILER "/usr/bin/gfortran")
-set(CMAKE_C_COMPILER "${MUSA_ROOT}/bin/clang")
-set(CMAKE_CXX_COMPILER "${MUSA_ROOT}/bin/mcc")
+if(NOT DEFINED CMAKE_Fortran_COMPILER)
+  set(CMAKE_Fortran_COMPILER "/usr/bin/gfortran")
+endif()
+if(NOT DEFINED CMAKE_C_COMPILER)
+  set(CMAKE_C_COMPILER "${MUSA_ROOT}/bin/clang")
+endif()
+if(NOT DEFINED CMAKE_CXX_COMPILER)
+  set(CMAKE_CXX_COMPILER "${MUSA_ROOT}/bin/mcc")
+endif()
 
 project(
   cp2k
@@ -72,7 +78,11 @@ string(REPLACE "-DNDEBUG" "" CMAKE_Fortran_FLAGS_RELEASE
 
 find_package(PkgConfig)
 
-link_libraries(asan ubsan)
+option(CP2K_ENABLE_SANITIZERS
+       "Link AddressSanitizer and UndefinedBehaviorSanitizer runtimes" OFF)
+if(CP2K_ENABLE_SANITIZERS)
+  link_libraries(asan ubsan)
+endif()
 
 # ##############################################################################
 # Define the paths for static libraries and executables
@@ -318,6 +328,13 @@ cmake_dependent_option(
 
 cmake_dependent_option(DBCSR_USE_OPENMP "Enable openmp support in DBCSR" ON
                        "CP2K_BUILD_DBCSR" OFF)
+# DBCSR is a separate CMake project and uses USE_OPENMP as its option name.
+# Keep the CP2K-facing option explicit so the nested target receives the same
+# OpenMP setting instead of silently falling back to its own default.
+if(CP2K_BUILD_DBCSR)
+  set(USE_OPENMP ${DBCSR_USE_OPENMP} CACHE BOOL
+      "Build the bundled DBCSR with OpenMP support" FORCE)
+endif()
 # ##############################################################################
 # specific variables for the regtests. Binaries will be created with an
 # extension               #
@@ -642,8 +659,12 @@ elseif(CP2K_USE_ACCEL MATCHES "MUSA")
   link_directories("${MUSA_ROOT}/lib")
   list(APPEND CMAKE_BUILD_RPATH "${MUSA_ROOT}/lib")
   list(APPEND CMAKE_INSTALL_RPATH "${MUSA_ROOT}/lib")
-  list(APPEND CMAKE_EXE_LINKER_FLAGS "-Wl,-rpath,${MUSA_ROOT}/lib")
-  list(APPEND CMAKE_SHARED_LINKER_FLAGS "-Wl,-rpath,${MUSA_ROOT}/lib")
+  # Use DT_RPATH so the path is searched for indirect libmufft dependencies
+  # such as libmtfft-device-*.so as well.
+  string(APPEND CMAKE_EXE_LINKER_FLAGS
+         " -Wl,-rpath,${MUSA_ROOT}/lib -Wl,--disable-new-dtags")
+  string(APPEND CMAKE_SHARED_LINKER_FLAGS
+         " -Wl,-rpath,${MUSA_ROOT}/lib -Wl,--disable-new-dtags")
 
   message(STATUS "GPU target architecture: ${CP2K_WITH_GPU}\n"
                  "GPU architecture number: ${CMAKE_MUSA_ARCHITECTURES}\n"
@@ -825,6 +846,23 @@ include(CompilerConfiguration)
 include(CheckCompilerSupport)
 
 if(CP2K_BUILD_DBCSR)
+  # The embedded build enters DBCSR at exts/dbcsr/src directly, so DBCSR's
+  # root CMakeLists.txt does not translate CP2K's MUSA selection.  Propagate
+  # the backend, architecture, SDK, and runtime libraries explicitly.
+  if(CP2K_USE_ACCEL MATCHES "MUSA")
+    set(USE_MPI ${CP2K_USE_MPI} CACHE BOOL "Build DBCSR with MPI support" FORCE)
+    set(USE_ACCEL musa CACHE STRING "DBCSR accelerator backend" FORCE)
+    set(WITH_GPU "mp_${CMAKE_MUSA_ARCHITECTURES}" CACHE STRING
+        "DBCSR accelerator architecture" FORCE)
+    set(WITH_GPU_PARAMS "mp_${CMAKE_MUSA_ARCHITECTURES}" CACHE STRING
+        "DBCSR parameter table architecture" FORCE)
+    set(ACC_ARCH_NUMBER "${CMAKE_MUSA_ARCHITECTURES}")
+    set(MUSA_HOME "${MUSA_ROOT}")
+    set(MUSA_RUNTIME_LIB "${MUSA_musart_LIBRARY}")
+    set(MUSA_DRIVER_LIB "${MUSA_musa_driver_LIBRARY}")
+    set(MUSA_RTC_LIB "${MUSA_mtrtc_LIBRARY}")
+    set(MUSA_BLAS_LIB "${MUSA_mublas_LIBRARY}")
+  endif()
   add_subdirectory(exts/dbcsr/src)
   add_library(DBCSR::dbcsr ALIAS dbcsr)
 endif()

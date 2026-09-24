@@ -427,11 +427,10 @@ static inline void offloadEnsureMallocHeapSize(const size_t required_size) {
     OFFLOAD_CHECK(hipDeviceSetLimit(hipLimitMallocHeapSize, required_size));
   }
 #elif defined(__OFFLOAD_MUSA)
-  // musaLimitMallocHeapSize not supported
-  OFFLOAD_CHECK(musaDeviceGetLimit(&current_size, musaLimitMallocHeapSize));
-  if (current_size < required_size) {
-    OFFLOAD_CHECK(musaDeviceSetLimit(musaLimitMallocHeapSize, required_size));
-  }
+  // MUSA device-side malloc/free heap is not supported on current targets.
+  // GRID CAB storage is provided by a host-side device pool instead.
+  (void)required_size;
+  (void)current_size;
 #else
   (void)required_size; // mark used
   (void)current_size;
